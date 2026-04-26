@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "clear",
+        "hooks": [
+          { "type": "command", "command": "$HOME/.claude/hooks/load-handoff.sh" }
+        ]
+      }
+    ]
+  }
+}
