@@ -129,9 +129,13 @@ Implementation: use Read on `~/CLAUDE.md`, then Edit to replace the marker block
 
 ## 7. Stage the handoff
 
-Use Write to create `~/.claude/handoff_pending.md`:
+Use Write to create `~/.claude/handoff_pending.md`. The first paragraph is a directive aimed at Claude in the new session — without it, Claude has the context but doesn't surface it spontaneously.
 
 ```markdown
+**INSTRUCTION TO CLAUDE**: This is a handoff from a prior session, auto-injected as context (or manually loaded via `/handoff`). On your first response, briefly acknowledge the prior work in 1–2 sentences, list the Open Tasks, and ask the user which to continue. Do not start executing tasks autonomously.
+
+---
+
 # Handoff from previous session — <ISO8601 timestamp>
 
 ## Summary of what was done

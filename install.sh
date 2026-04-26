@@ -38,10 +38,12 @@ echo "  $LOGS_DIR"
 echo "  $ARCHIVE_DIR"
 
 echo
-echo "Installing slash command..."
-backup_if_exists "$CMDS_DIR/log.md"
-ln -s "$REPO_DIR/commands/log.md" "$CMDS_DIR/log.md"
-echo "  symlinked $CMDS_DIR/log.md → $REPO_DIR/commands/log.md"
+echo "Installing slash commands..."
+for cmd in log.md handoff.md; do
+  backup_if_exists "$CMDS_DIR/$cmd"
+  ln -s "$REPO_DIR/commands/$cmd" "$CMDS_DIR/$cmd"
+  echo "  symlinked $CMDS_DIR/$cmd → $REPO_DIR/commands/$cmd"
+done
 
 echo
 echo "Installing SessionStart hook..."

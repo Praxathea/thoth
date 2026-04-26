@@ -6,6 +6,12 @@
         "hooks": [
           { "type": "command", "command": "$HOME/.claude/hooks/load-handoff.sh" }
         ]
+      },
+      {
+        "matcher": "startup",
+        "hooks": [
+          { "type": "command", "command": "$HOME/.claude/hooks/load-handoff.sh" }
+        ]
       }
     ]
   }
