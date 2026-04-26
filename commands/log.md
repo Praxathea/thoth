@@ -19,12 +19,30 @@ Examples:
 
 ## 2. Locate the current transcript
 
+Claude Code does not expose `$CLAUDE_TRANSCRIPT_PATH` to slash-command bash (verified — only `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_EXECPATH` are visible). Locate by recently-modified mtime across all project transcript dirs, with disambiguation when multiple sessions are active.
+
 ```bash
-TRANSCRIPT=$(ls -t ~/.claude/projects/-home-skiastro/*.jsonl | head -1)
+PROJECTS_DIR="$HOME/.claude/projects"
+RECENT=$(find "$PROJECTS_DIR" -maxdepth 2 -name '*.jsonl' -mmin -2 2>/dev/null)
+RECENT_COUNT=$(printf '%s\n' "$RECENT" | grep -c . || true)
+
+if [[ "$RECENT_COUNT" -eq 1 ]]; then
+  TRANSCRIPT="$RECENT"
+elif [[ "$RECENT_COUNT" -gt 1 ]]; then
+  # Parallel sessions detected — pick newest mtime and warn.
+  TRANSCRIPT=$(printf '%s\n' "$RECENT" | xargs ls -t 2>/dev/null | head -1)
+  echo "NOTE: $RECENT_COUNT active transcripts; picked $TRANSCRIPT by mtime." >&2
+  echo "If wrong session, grep recent transcripts for a unique phrase from your prompts:" >&2
+  echo "  grep -l '<unique-phrase>' $(printf '%s ' $RECENT)" >&2
+else
+  # No activity in last 2 min — fall back to overall most recent.
+  TRANSCRIPT=$(ls -t "$PROJECTS_DIR"/*/*.jsonl 2>/dev/null | head -1)
+fi
+
 SESSION_ID=$(jq -r 'select(.sessionId != null) | .sessionId' "$TRANSCRIPT" | head -1)
 ```
 
-The most-recent-mtime file is the current session's JSONL.
+Capture `$TRANSCRIPT` once at this step and reuse the variable for all subsequent jq calls. Do not re-run `ls -t` later — a sibling `/log` run can change the result mid-execution.
 
 ## 3. Compute filename
 

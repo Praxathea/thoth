@@ -55,9 +55,8 @@ ls -t ~/.claude/handoff_archive/ | head -1
 
 ## Known issues
 
-- **Parallel sessions race**: the transcript picker uses `ls -t | head -1`, which picks the wrong file when multiple Claude Code sessions are active. Workaround: include a phrase unique to your current session in your last prompt before `/log`, then verify the resulting log matches.
+- **Parallel sessions narrow race**: when two Claude Code sessions are active and you run `/log`, the picker now scans transcripts modified in the last 2 minutes; if more than one matches, it picks newest mtime and prints a `NOTE:` to stderr with a `grep -l` command to verify. The wrong-session case is rare but possible — when in doubt, include a phrase unique to your current session in your last prompt before `/log`.
 - **Concurrent `/log` runs race on the marker block**: if two sessions run `/log` at the same time, the later one wins the `CLAUDE.md` pointer. Both log files survive intact.
-- **Hardcoded transcript path**: `commands/log.md` step 2 references `~/.claude/projects/-home-skiastro/*.jsonl`. Replace `-home-skiastro` with your own slugified `$HOME` (e.g. `-home-alice`). Will be parameterized in a future release.
 - **Thinking-block content is empty**: Claude Code does not persist reasoning text to the transcript; only block structure. The `## Thinking context` section will always be blank for past sessions.
 
 ## Files
