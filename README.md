@@ -57,7 +57,6 @@ To manually surface a handoff (e.g. mid-session, or to re-read a prior one):
 ## Known issues
 
 - **Parallel sessions narrow race**: when two Claude Code sessions are active and you run `/log`, the picker now scans transcripts modified in the last 2 minutes; if more than one matches, it picks newest mtime and prints a `NOTE:` to stderr with a `grep -l` command to verify. The wrong-session case is rare but possible — when in doubt, include a phrase unique to your current session in your last prompt before `/log`.
-- **Concurrent `/log` runs race on the marker block**: if two sessions run `/log` at the same time, the later one wins the `CLAUDE.md` pointer. Both log files survive intact.
 - **Thinking-block content is empty**: Claude Code does not persist reasoning text to the transcript; only block structure. The `## Thinking context` section will always be blank for past sessions.
 
 ## Files

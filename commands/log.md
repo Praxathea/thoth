@@ -125,7 +125,37 @@ Replace the block between `<!-- LATEST_LOG_START -->` and `<!-- LATEST_LOG_END -
 <!-- LATEST_LOG_END -->
 ```
 
-Implementation: use Read on `~/CLAUDE.md`, then Edit to replace the marker block. The whole block (including both markers) gets rewritten so any leftover whitespace is cleaned.
+**Implementation**: do the read-modify-write atomically under an exclusive `flock` so concurrent `/log` runs can't race on the marker. Substitute `<FILENAME>` and `<SUMMARY>` (your one-line summary, ≤80 chars) into the snippet below before running it as a single Bash tool call:
+
+```bash
+mkdir -p "$HOME/.claude"
+(
+  flock -x 9
+  python3 - "<FILENAME>" "<SUMMARY>" <<'PY'
+import re, sys, pathlib
+fname, summary = sys.argv[1], sys.argv[2]
+p = pathlib.Path.home() / "CLAUDE.md"
+new_block = (
+    "<!-- LATEST_LOG_START -->\n"
+    "## Latest Session Log\n"
+    f"- [{fname}](logs/Claude_logs/{fname}) — {summary}\n"
+    "<!-- LATEST_LOG_END -->"
+)
+text = p.read_text()
+out, n = re.subn(
+    r"<!-- LATEST_LOG_START -->.*?<!-- LATEST_LOG_END -->",
+    new_block, text, count=1, flags=re.DOTALL,
+)
+if n == 0:
+    print("MARKER_BLOCK_MISSING — skipping CLAUDE.md update", file=sys.stderr)
+    sys.exit(0)
+p.write_text(out)
+print(f"Updated CLAUDE.md marker -> {fname}")
+PY
+) 9>"$HOME/.claude/claude-md.lock"
+```
+
+The `( ... ) 9>...` opens the lockfile for the entire subshell; `flock -x 9` blocks until exclusive. Read, regex-swap, and write all happen inside the critical section, so two parallel `/log` invocations serialize cleanly. The lockfile is created on demand. If markers don't exist, prints `MARKER_BLOCK_MISSING` to stderr and skips (matches the README's documented behavior).
 
 ## 7. Stage the handoff
 
