@@ -1,9 +1,10 @@
 ---
-description: Capture the current session as a structured log, update CLAUDE.md, and stage a handoff for /clear
+name: log
+description: Capture the current session as a structured log, update CLAUDE.md, refresh the three session-log wiki HTMLs incrementally, and stage a handoff for /clear. Use when the user runs /log or asks to log/checkpoint the session.
 argument-hint: [optional title]
 ---
 
-You are executing the `/log` command. Your job: write a comprehensive log of the current session to disk, point CLAUDE.md at it, stage a handoff, and tell the user what to do next.
+You are executing the `/log` command. Your job: write a comprehensive log of the current session to disk, point CLAUDE.md at it, incrementally update the three wiki HTMLs, stage a handoff, and tell the user what to do next.
 
 Do **everything** in this command — do not stop partway. Do not ask the user for input. At the end, the only message to the user is the final status block described at the bottom.
 
@@ -19,24 +20,27 @@ Examples:
 
 ## 2. Locate the current transcript
 
-Claude Code does not expose `$CLAUDE_TRANSCRIPT_PATH` to slash-command bash (verified — only `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_EXECPATH` are visible). Locate by recently-modified mtime across all project transcript dirs, with disambiguation when multiple sessions are active.
+Prefer `${CLAUDE_SESSION_ID}` when the skill runtime exposes it — it names this exact session and sidesteps the parallel-session race. Fall back to recently-modified mtime otherwise.
 
 ```bash
 PROJECTS_DIR="$HOME/.claude/projects"
-RECENT=$(find "$PROJECTS_DIR" -maxdepth 2 -name '*.jsonl' -mmin -2 2>/dev/null)
-RECENT_COUNT=$(printf '%s\n' "$RECENT" | grep -c . || true)
-
-if [[ "$RECENT_COUNT" -eq 1 ]]; then
-  TRANSCRIPT="$RECENT"
-elif [[ "$RECENT_COUNT" -gt 1 ]]; then
-  # Parallel sessions detected — pick newest mtime and warn.
-  TRANSCRIPT=$(printf '%s\n' "$RECENT" | xargs ls -t 2>/dev/null | head -1)
-  echo "NOTE: $RECENT_COUNT active transcripts; picked $TRANSCRIPT by mtime." >&2
-  echo "If wrong session, grep recent transcripts for a unique phrase from your prompts:" >&2
-  echo "  grep -l '<unique-phrase>' $(printf '%s ' $RECENT)" >&2
-else
-  # No activity in last 2 min — fall back to overall most recent.
-  TRANSCRIPT=$(ls -t "$PROJECTS_DIR"/*/*.jsonl 2>/dev/null | head -1)
+TRANSCRIPT=""
+if [[ -n "${CLAUDE_SESSION_ID:-}" ]]; then
+  TRANSCRIPT=$(find "$PROJECTS_DIR" -maxdepth 2 -name "${CLAUDE_SESSION_ID}.jsonl" 2>/dev/null | head -1)
+fi
+if [[ -z "$TRANSCRIPT" ]]; then
+  RECENT=$(find "$PROJECTS_DIR" -maxdepth 2 -name '*.jsonl' -mmin -2 2>/dev/null)
+  RECENT_COUNT=$(printf '%s\n' "$RECENT" | grep -c . || true)
+  if [[ "$RECENT_COUNT" -eq 1 ]]; then
+    TRANSCRIPT="$RECENT"
+  elif [[ "$RECENT_COUNT" -gt 1 ]]; then
+    TRANSCRIPT=$(printf '%s\n' "$RECENT" | xargs ls -t 2>/dev/null | head -1)
+    echo "NOTE: $RECENT_COUNT active transcripts; picked $TRANSCRIPT by mtime." >&2
+    echo "If wrong session, grep recent transcripts for a unique phrase from your prompts:" >&2
+    echo "  grep -l '<unique-phrase>' $(printf '%s ' $RECENT)" >&2
+  else
+    TRANSCRIPT=$(ls -t "$PROJECTS_DIR"/*/*.jsonl 2>/dev/null | head -1)
+  fi
 fi
 
 SESSION_ID=$(jq -r 'select(.sessionId != null) | .sessionId' "$TRANSCRIPT" | head -1)
@@ -116,16 +120,7 @@ Use Write to create `$LOG_PATH` with this exact structure:
 
 ## 6. Update ~/CLAUDE.md
 
-Replace the block between `<!-- LATEST_LOG_START -->` and `<!-- LATEST_LOG_END -->` (markers already exist) with:
-
-```markdown
-<!-- LATEST_LOG_START -->
-## Latest Session Log
-- [<FILENAME>](logs/Claude_logs/<FILENAME>) — <one-line summary, ≤80 chars>
-<!-- LATEST_LOG_END -->
-```
-
-**Implementation**: do the read-modify-write atomically under an exclusive `flock` so concurrent `/log` runs can't race on the marker. Substitute `<FILENAME>` and `<SUMMARY>` (your one-line summary, ≤80 chars) into the snippet below before running it as a single Bash tool call:
+Replace the block between `<!-- LATEST_LOG_START -->` and `<!-- LATEST_LOG_END -->` (markers already exist) with the new pointer. Do the read-modify-write atomically under an exclusive `flock` so concurrent `/log` runs can't race. Substitute `<FILENAME>` and `<SUMMARY>` (≤80 chars) before running:
 
 ```bash
 mkdir -p "$HOME/.claude"
@@ -155,9 +150,40 @@ PY
 ) 9>"$HOME/.claude/claude-md.lock"
 ```
 
-The `( ... ) 9>...` opens the lockfile for the entire subshell; `flock -x 9` blocks until exclusive. Read, regex-swap, and write all happen inside the critical section, so two parallel `/log` invocations serialize cleanly. The lockfile is created on demand. If markers don't exist, prints `MARKER_BLOCK_MISSING` to stderr and skips (matches the README's documented behavior).
+## 7. Update the three session-log wiki HTMLs (incremental, append-only)
 
-## 7. Stage the handoff
+These live in `~/logs/Claude_logs/wiki/` (`open-tasks.html`, `completed-by-subject.html`, `lessons-learned.html`). **Never resummarize them.** You only contribute *this session's* deltas; the helper splices them in under each file's "Session Updates" region. Build a `delta.json` from material you already synthesized in step 5, then run the helper.
+
+Field mapping — be conservative, quality over volume:
+- `todos_new` — open items that are **genuinely new this session** (not carried over from the loaded handoff / not already present in `open-tasks.html`). Each is `{title, meta, body}`; `meta` may contain `<code>…</code>` markup (paths), `title`/`body` are plain text (auto-escaped).
+- `todos_done` — short, **uniquely-identifying substrings** of tasks that existed *before* this session (from the prior handoff's Open Tasks or `open-tasks.html`) and were **completed** this session. The helper prepends `DONE <date>:` to the matching `<h3>` in place. Pick substrings distinctive enough to match exactly one card; the helper warns on a miss.
+- `completed_new` — 1–3 plain-text sentences summarizing notable work finished or decisions/clarifications made this session. Rendered as `Edit:`-prefixed dated entries.
+- `lessons_new` — the durable bullets from your Lessons Learned section (drop the "(no notable issues)" filler). Plain text.
+
+Omit any field that has nothing for it (don't emit empty placeholders). If a whole session produced no wiki-worthy deltas, skip this step entirely.
+
+```bash
+mkdir -p /tmp/log-build-$$
+cat > /tmp/log-build-$$/delta.json <<'JSON'
+{
+  "date": "<YYYY-MM-DD>",
+  "todos_new":    [ { "title": "...", "meta": "<code>path</code>", "body": "..." } ],
+  "todos_done":   [ "unique substring of a prior open task" ],
+  "completed_new":[ "what got done / clarified this session" ],
+  "lessons_new":  [ "durable lesson" ]
+}
+JSON
+# Resolve the helper relative to this skill's repo (survives any clone location),
+# with the canonical path as fallback.
+SKILL_REAL="$(readlink -f "$HOME/.claude/skills/log/SKILL.md")"
+WIKI_HELPER="$(cd "$(dirname "$SKILL_REAL")/../../scripts" 2>/dev/null && pwd)/log_wiki_update.py"
+[[ -f "$WIKI_HELPER" ]] || WIKI_HELPER="$HOME/projects/thoth/scripts/log_wiki_update.py"
+python3 "$WIKI_HELPER" --delta /tmp/log-build-$$/delta.json
+```
+
+The helper is idempotent for `DONE` marking (won't double-prefix) and auto-creates each file's append region if missing. If a wiki file is absent it prints `MISSING:` and continues — non-fatal. Capture its stdout; include a one-line summary of what it changed in the final status block.
+
+## 8. Stage the handoff
 
 Use Write to create `~/.claude/handoff_pending.md`. The first paragraph is a directive aimed at Claude in the new session — without it, Claude has the context but doesn't surface it spontaneously.
 
@@ -181,7 +207,7 @@ Use Write to create `~/.claude/handoff_pending.md`. The first paragraph is a dir
 See: `~/logs/Claude_logs/<FILENAME>`
 ```
 
-## 8. Final output to user
+## 9. Final output to user
 
 Print exactly (no preamble, no explanation):
 
@@ -189,6 +215,7 @@ Print exactly (no preamble, no explanation):
 DONE.
 - Log: ~/logs/Claude_logs/<FILENAME>
 - CLAUDE.md pointer: updated
+- Wiki HTMLs: <one-line summary of helper output, or "no deltas this session">
 - Handoff: ~/.claude/handoff_pending.md
 
 Type /clear next — the SessionStart hook will auto-inject the handoff into the fresh session.
@@ -200,4 +227,5 @@ Then stop. Do not continue with other work.
 
 - Do not use emojis anywhere — the user prefers plain text.
 - If any extraction step fails (transcript malformed, jq error), still produce the log with whatever sections you have. Mark missing sections explicitly: `(extraction failed: <reason>)`. Never abort silently.
-- Keep all outputs in the log verbatim — do not paraphrase user prompts or your own outputs. Lessons Learned and Summary are the only places where you synthesize.
+- Keep all outputs in the log verbatim — do not paraphrase user prompts or your own outputs. Lessons Learned, Summary, and the wiki deltas are the only places where you synthesize.
+- The wiki update (step 7) is additive only. If you are tempted to "clean up" or rewrite an existing wiki entry, don't — that is a separate, explicit `/wiki-build`-style task, not `/log`.
